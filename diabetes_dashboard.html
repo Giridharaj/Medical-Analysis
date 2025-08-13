@@ -1,0 +1,327 @@
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Health Metrics Dashboard (Diabetes)</title>
+  <script src="https://cdn.plot.ly/plotly-latest.min.js"></script>
+  <style>
+    :root {
+      --bg: #f4f8ff;
+      --card: #ffffff;
+      --text: #1f2a44;
+      --muted: #5b6b8c;
+      --accent: #4f46e5;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: Inter, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, "Apple Color Emoji", "Segoe UI Emoji";
+      background: var(--bg);
+      color: var(--text);
+    }
+    header {
+      padding: 24px 16px;
+      position: sticky;
+      top: 0;
+      background: linear-gradient(180deg, rgba(244,248,255,1) 0%, rgba(244,248,255,0.85) 100%);
+      backdrop-filter: blur(6px);
+      z-index: 10;
+      border-bottom: 1px solid #e6ecff;
+    }
+    .container {
+      width: min(1200px, 92vw);
+      margin: 0 auto;
+    }
+    h1 { margin: 0 0 8px 0; font-weight: 700; font-size: clamp(20px, 3.5vw, 30px); }
+    .sub { color: var(--muted); margin: 0; }
+    .uploader {
+      margin: 18px 0 8px;
+      display: flex;
+      gap: 12px;
+      align-items: center;
+      flex-wrap: wrap;
+    }
+    input[type="file"] {
+      padding: 10px 12px;
+      border: 1px dashed #c7d2fe;
+      border-radius: 10px;
+      background: #fff;
+      cursor: pointer;
+    }
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(12, 1fr);
+      gap: 16px;
+      margin: 18px 0 32px;
+    }
+    .card {
+      background: var(--card);
+      border: 1px solid #eef2ff;
+      border-radius: 14px;
+      padding: 14px;
+      box-shadow: 0 6px 18px rgba(79,70,229,0.06);
+    }
+    .span-6 { grid-column: span 6; }
+    .span-12 { grid-column: span 12; }
+    .title {
+      display: flex; align-items: center; gap: 10px; margin: 0 0 8px 0;
+      font-size: 16px; font-weight: 600;
+    }
+    .hint { color: var(--muted); font-size: 12px; margin-bottom: 6px; }
+    .footer-note { color: var(--muted); font-size: 12px; margin: 24px 0 40px; }
+    @media (max-width: 900px) {
+      .span-6 { grid-column: span 12; }
+    }
+    .pill {
+      display: inline-flex; align-items: center; gap: 8px;
+      background: #eef2ff; color: var(--accent);
+      border-radius: 999px; padding: 6px 10px; font-size: 12px;
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="container">
+      <h1>Interactive Health Metrics Dashboard</h1>
+      <p class="sub">Upload a JSON file with diabetes-related records to generate insights (Class variable YES/NO).</p>
+      <div class="uploader">
+        <input type="file" id="fileInput" accept=".json" />
+        <span class="pill" id="status">No file loaded</span>
+      </div>
+    </div>
+  </header>
+
+  <main class="container">
+    <div class="grid">
+      <section class="card span-6">
+        <h3 class="title">1) Class Distribution</h3>
+        <p class="hint">Share of patients with and without diabetes.</p>
+        <div id="chart-class" style="height:360px;"></div>
+      </section>
+
+      <section class="card span-6">
+        <h3 class="title">2) Plasma Glucose Distribution by Class</h3>
+        <p class="hint">Compare glucose levels for YES vs NO classes.</p>
+        <div id="chart-glucose" style="height:360px;"></div>
+      </section>
+
+      <section class="card span-12">
+        <h3 class="title">3) Age Group vs Diabetes Prevalence</h3>
+        <p class="hint">Percent of YES in each age bucket.</p>
+        <div id="chart-age" style="height:380px;"></div>
+      </section>
+
+      <section class="card span-6">
+        <h3 class="title">4) BMI vs Age (colored by Class)</h3>
+        <p class="hint">Explore how BMI and Age relate to outcome.</p>
+        <div id="chart-bmi-age" style="height:360px;"></div>
+      </section>
+
+      <section class="card span-6">
+        <h3 class="title">5) Correlation Heatmap</h3>
+        <p class="hint">Pearson correlation among numeric variables.</p>
+        <div id="chart-corr" style="height:360px;"></div>
+      </section>
+    </div>
+
+    <p class="footer-note">
+      Tip: This template expects keys like <em>Plasma glucose concentration</em>, <em>Body mass index</em>, <em>Age (years)</em>, and a <em>Class variable</em> of YES/NO.
+      Column names can be customized in the script.
+    </p>
+  </main>
+
+  <script>
+    const statusEl = document.getElementById('status');
+    const fileInput = document.getElementById('fileInput');
+
+    fileInput.addEventListener('change', (e) => {
+      const file = e.target.files[0];
+      if (!file) return;
+      const reader = new FileReader();
+      reader.onload = (evt) => {
+        try {
+          const data = JSON.parse(evt.target.result);
+          if (!Array.isArray(data)) throw new Error('JSON root must be an array of records');
+          statusEl.textContent = `Loaded ${data.length} records`;
+          renderDashboard(data);
+        } catch (err) {
+          statusEl.textContent = 'Error loading file';
+          alert('Invalid JSON: ' + err.message);
+        }
+      };
+      reader.readAsText(file);
+    });
+
+    // === Config: map column names so you can adjust easily ===
+    const COL = {
+      classVar: 'Class variable',
+      age: 'Age (years)',
+      bmi: 'Body mass index',
+      glucose: 'Plasma glucose concentration',
+      dbp: 'Diastolic blood pressure',
+      skinfold: 'Triceps skin fold thickness',
+      insulin: '2-Hour serum insulin'
+    };
+
+    function renderDashboard(raw) {
+      // normalize records & coerce numbers
+      const data = raw.map(r => ({
+        classVar: (r[COL.classVar] ?? '').toString().trim(),
+        age: toNum(r[COL.age]),
+        bmi: toNum(r[COL.bmi]),
+        glucose: toNum(r[COL.glucose]),
+        dbp: toNum(r[COL.dbp]),
+        skinfold: toNum(r[COL.skinfold]),
+        insulin: toNum(r[COL.insulin])
+      }));
+
+      // 1) Class Distribution
+      const yesCount = data.filter(d => d.classVar.toUpperCase() === 'YES').length;
+      const noCount = data.filter(d => d.classVar.toUpperCase() === 'NO').length;
+      Plotly.newPlot('chart-class', [{
+        type: 'pie',
+        labels: ['YES', 'NO'],
+        values: [yesCount, noCount],
+        hole: 0.45
+      }], {
+        title: 'Diabetes vs Non-Diabetes',
+        margin: { t: 40, l: 20, r: 20, b: 20 },
+        legend: { orientation: 'h' }
+      }, {responsive: true});
+
+      // 2) Plasma Glucose Distribution by Class (overlay histograms)
+      const glucoseYes = data.filter(d => d.classVar.toUpperCase() === 'YES' && isFinite(d.glucose)).map(d => d.glucose);
+      const glucoseNo = data.filter(d => d.classVar.toUpperCase() === 'NO' && isFinite(d.glucose)).map(d => d.glucose);
+      Plotly.newPlot('chart-glucose', [
+        { type: 'histogram', x: glucoseYes, name: 'YES', opacity: 0.65, nbinsx: 20 },
+        { type: 'histogram', x: glucoseNo, name: 'NO', opacity: 0.65, nbinsx: 20 }
+      ], {
+        barmode: 'overlay',
+        xaxis: { title: 'Plasma glucose concentration' },
+        yaxis: { title: 'Count' },
+        margin: { t: 40, l: 50, r: 10, b: 50 }
+      }, {responsive: true});
+
+      // 3) Age Group vs Prevalence
+      const buckets = makeBuckets(data.map(d => d.age).filter(isFinite), 10); // 10-year bins
+      const bucketStats = buckets.map(([lo, hi]) => {
+        const inBin = data.filter(d => isFinite(d.age) && d.age >= lo && d.age <= hi);
+        const yes = inBin.filter(d => d.classVar.toUpperCase() === 'YES').length;
+        const pctYes = inBin.length ? (yes / inBin.length) * 100 : 0;
+        return { label: `${lo}-${hi}`, pctYes, n: inBin.length };
+      });
+      Plotly.newPlot('chart-age', [{
+        type: 'bar',
+        x: bucketStats.map(b => b.label),
+        y: bucketStats.map(b => Number(b.pctYes.toFixed(1))),
+        text: bucketStats.map(b => `${b.pctYes.toFixed(1)}% (n=${b.n})`),
+        textposition: 'auto'
+      }], {
+        yaxis: { title: '% YES', rangemode: 'tozero' },
+        xaxis: { title: 'Age group (years)' },
+        margin: { t: 40, l: 50, r: 10, b: 60 }
+      }, {responsive: true});
+
+      // 4) BMI vs Age scatter, colored by class
+      const byClass = ['YES', 'NO'].map(cls => ({
+        type: 'scattergl',
+        mode: 'markers',
+        name: cls,
+        x: data.filter(d => d.classVar.toUpperCase() === cls && isFinite(d.age) && isFinite(d.bmi)).map(d => d.age),
+        y: data.filter(d => d.classVar.toUpperCase() === cls && isFinite(d.age) && isFinite(d.bmi)).map(d => d.bmi),
+        text: data.filter(d => d.classVar.toUpperCase() === cls).map(d => `Age: ${d.age}, BMI: ${d.bmi}`),
+        marker: { size: 8, line: { width: 0.5 } }
+      }));
+      Plotly.newPlot('chart-bmi-age', byClass, {
+        xaxis: { title: 'Age (years)' },
+        yaxis: { title: 'Body mass index' },
+        margin: { t: 40, l: 50, r: 10, b: 50 }
+      }, {responsive: true});
+
+      // 5) Correlation heatmap (numeric columns only)
+      const numericCols = ['age','bmi','glucose','dbp','skinfold','insulin'];
+      const matrix = buildMatrix(data, numericCols);
+      const corr = correlation(matrix);
+      Plotly.newPlot('chart-corr', [{
+        type: 'heatmap',
+        z: corr,
+        x: numericCols.map(pretty),
+        y: numericCols.map(pretty),
+        zmin: -1, zmax: 1,
+        colorscale: 'RdBu',
+        reversescale: true
+      }], {
+        margin: { t: 40, l: 90, r: 10, b: 60 }
+      }, {responsive: true});
+    }
+
+    // Utilities
+    function toNum(v) {
+      const n = Number(v);
+      return Number.isFinite(n) ? n : NaN;
+    }
+    function makeBuckets(values, width=10) {
+      if (!values.length) return [];
+      const min = Math.floor(Math.min(...values) / width) * width;
+      const max = Math.ceil(Math.max(...values) / width) * width;
+      const buckets = [];
+      for (let lo = min; lo < max; lo += width) {
+        const hi = lo + width - 1;
+        buckets.push([lo, hi]);
+      }
+      return buckets;
+    }
+    function buildMatrix(data, cols) {
+      return cols.map(c => data.map(r => r[c]).map(v => Number.isFinite(v) ? v : NaN));
+    }
+    function correlation(matrix) {
+      const k = matrix.length;
+      const n = matrix[0]?.length ?? 0;
+      const means = matrix.map(col => mean(col));
+      const stds = matrix.map(col => std(col, means[matrix.indexOf(col)]));
+      const corr = Array.from({length: k}, () => Array(k).fill(0));
+      for (let i=0;i<k;i++) {
+        for (let j=0;j<k;j++) {
+          corr[i][j] = pearson(matrix[i], matrix[j], means[i], means[j], stds[i], stds[j]);
+        }
+      }
+      return corr;
+    }
+    function mean(arr) {
+      const vals = arr.filter(Number.isFinite);
+      return vals.length ? vals.reduce((a,b)=>a+b,0) / vals.length : NaN;
+    }
+    function std(arr, mu) {
+      const vals = arr.filter(Number.isFinite);
+      if (!vals.length) return NaN;
+      const v = vals.reduce((s,x)=>s+(x-mu)*(x-mu),0) / (vals.length-1 || 1);
+      return Math.sqrt(v);
+    }
+    function pearson(a, b, ma, mb, sa, sb) {
+      const n = Math.min(a.length, b.length);
+      let s = 0, cnt = 0;
+      for (let i=0;i<n;i++) {
+        const xi = a[i], yi = b[i];
+        if (Number.isFinite(xi) && Number.isFinite(yi)) {
+          s += (xi - ma) * (yi - mb);
+          cnt++;
+        }
+      }
+      if (cnt <= 1 || !Number.isFinite(sa) || !Number.isFinite(sb) || sa === 0 || sb === 0) return 0;
+      return s / ((cnt-1) * sa * sb);
+    }
+    function pretty(key) {
+      return {
+        age: 'Age',
+        bmi: 'BMI',
+        glucose: 'Glucose',
+        dbp: 'Diastolic BP',
+        skinfold: 'Skinfold',
+        insulin: 'Insulin'
+      }[key] || key;
+    }
+  </script>
+</body>
+</html>
